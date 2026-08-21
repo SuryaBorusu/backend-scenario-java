@@ -64,13 +64,49 @@ jobs:
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: snyk test --file=pom.xml --severity-threshold=high --sarif-file-output=snyk.sarif --org=${{ secrets.SNYK_ORG }}
+        run: |
+          snyk test --file=pom.xml --severity-threshold=high \
+            --sarif-file-output=snyk.sarif \
+            --json-file-output=snyk-report.json \
+            --org=${{ secrets.SNYK_ORG }} || true
 
-      - name: Upload Snyk SARIF report
+      - name: Write Snyk summary
+        if: always()
+        run: |
+          echo "## 🔒 Snyk Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f snyk-report.json ]; then
+            HIGH=$(cat snyk-report.json | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          vulns=d.get('vulnerabilities',[])
+          high=[v for v in vulns if v.get('severity') in ('high','critical')]
+          if not high:
+              print('✅ No high/critical vulnerabilities found.')
+          else:
+              print(f'⚠️ **{len(high)} high/critical vulnerabilities found:**')
+              print('')
+              print('| Severity | Vulnerability | Package | Fix |')
+              print('|---|---|---|---|')
+              for v in high[:10]:
+                  fix=v.get('fixedIn',['none'])[0] if v.get('fixedIn') else 'none'
+                  print(f\"| {v.get('severity','').upper()} | {v.get('title','')} | {v.get('packageName','')}@{v.get('version','')} | {fix} |\")
+              if len(high)>10:
+                  print(f'| ... | {len(high)-10} more findings | | |')
+          ")
+            echo "$HIGH" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Snyk report not generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Snyk reports
+        if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: snyk-sarif
-          path: snyk.sarif
+          name: snyk-reports
+          path: |
+            snyk.sarif
+            snyk-report.json
           retention-days: 7
 
   sonar-scan:

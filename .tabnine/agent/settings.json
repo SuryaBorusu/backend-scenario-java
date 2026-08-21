@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "AfterTool": [
+      {
+        "matcher": "^write_file$",
+        "hooks": [
+          {
+            "name": "secret-scan-on-write",
+            "description": "Automatically scans for leaked secrets after any file is written. Runs gitleaks and writes report to reports/gitleaks-report.json.",
+            "type": "command",
+            "command": "bash .tabnine/agent/skills/secret-scanner/scripts/run_scan.sh"
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "^run_shell_command$",
+        "hooks": [
+          {
+            "name": "secret-scan-on-commit",
+            "description": "Scans for leaked secrets before a git commit runs, blocking secrets from entering git history.",
+            "type": "command",
+            "command": "bash -c 'echo \"$TABNINE_TOOL_INPUT\" | grep -q \"git commit\" && bash .tabnine/agent/skills/secret-scanner/scripts/run_scan.sh || true'"
+          }
+        ]
+      }
+    ]
+  }
+}
