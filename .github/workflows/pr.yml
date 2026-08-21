@@ -54,16 +54,17 @@ jobs:
           distribution: temurin
           cache: maven
 
+      - name: Install Snyk CLI
+        run: npm install -g snyk --silent
+
       - name: Generate dependency tree (required by Snyk for Maven)
         run: ./mvnw --no-transfer-progress dependency:resolve -DskipTests
 
       - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/maven@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --sarif-file-output=snyk.sarif --org=${{ secrets.SNYK_ORG }}
+        run: snyk test --file=pom.xml --severity-threshold=high --sarif-file-output=snyk.sarif --org=${{ secrets.SNYK_ORG }}
 
       - name: Upload Snyk SARIF report
         uses: actions/upload-artifact@v5
@@ -92,7 +93,8 @@ jobs:
 
       - name: Build & run SonarCloud analysis
         run: >
-          ./mvnw --no-transfer-progress verify sonar:sonar
+          ./mvnw --no-transfer-progress verify
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
           -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
           -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
           -Dsonar.host.url=https://sonarcloud.io
