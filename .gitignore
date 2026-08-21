@@ -24,3 +24,8 @@ springboot-petclinic-server/
 
 # newman reports
 ./src/test/postman/reports/
+
+# gitleaks reports
+gitleaks-report.json
+gitleaks.sarif
+
