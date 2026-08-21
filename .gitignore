@@ -29,3 +29,7 @@ springboot-petclinic-server/
 gitleaks-report.json
 gitleaks.sarif
 
+# snyk reports
+snyk-report.json
+snyk.sarif
+
