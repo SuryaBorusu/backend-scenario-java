@@ -21,7 +21,13 @@
             "name": "secret-scan-on-commit",
             "description": "Scans for leaked secrets before a git commit runs, blocking secrets from entering git history.",
             "type": "command",
-            "command": "bash -c 'echo \"$TABNINE_TOOL_INPUT\" | grep -q \"git commit\" && bash .tabnine/agent/skills/secret-scanner/scripts/run_scan.sh || true'"
+            "command": "bash -c 'echo \"$TABNINE_TOOL_INPUT\" | grep -q \"git commit\" && bash .tabnine/agent/skills/secret-scanner/scripts/run_scan.sh'"
+          },
+          {
+            "name": "snyk-scan-on-commit",
+            "description": "Runs Snyk vulnerability scan on pom.xml before a git commit, blocking high/critical vulnerabilities from entering the codebase.",
+            "type": "command",
+            "command": "bash -c 'echo \"$TABNINE_TOOL_INPUT\" | grep -q \"git commit\" && bash .tabnine/agent/skills/snyk-scanner/scripts/run_scan.sh || true'"
           }
         ]
       }
