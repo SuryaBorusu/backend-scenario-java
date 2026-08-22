@@ -19,6 +19,7 @@
 - [ ] Scope `envsubst` explicitly: `envsubst '$IMAGE $IMAGE_TAG'` to avoid accidental substitution of future K8s variables
 - [ ] Add `.dockerignore` to exclude `src/test`, `.git`, `target/` from Docker build context
 - [ ] Restore Java 24 matrix test on `pr.yml` (removed from `ci.yml` to stay under 5 min budget)
+- [x] Add SonarCloud as parallel non-blocking job in ci.yml — runs alongside build, reports to Summary, never blocks deploy
 - [ ] Add `snyk monitor` step after successful deploy to track the project on snyk.io for ongoing CVE alerts
 - [ ] Pin `eclipse-temurin:21-jre-alpine` to a digest in `Dockerfile` for fully reproducible image builds
 
