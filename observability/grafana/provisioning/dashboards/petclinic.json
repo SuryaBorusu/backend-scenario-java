@@ -1,0 +1,117 @@
+{
+  "title": "PetClinic",
+  "uid": "petclinic",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"petclinic\"}[5m]))",
+          "legendFormat": "req/s"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Failed Requests",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"petclinic\",status=~\"4..\"}[5m]))",
+          "legendFormat": "4xx"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"petclinic\",status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "P95 Latency",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"petclinic\"}[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Memory + CPU (Saturation)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Heap Memory" },
+            "properties": [
+              { "id": "unit", "value": "bytes" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(jvm_memory_used_bytes{application=\"petclinic\",area=\"heap\"})",
+          "legendFormat": "Heap Memory"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "process_cpu_usage{application=\"petclinic\"}",
+          "legendFormat": "CPU Usage"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Total Failed Requests (cumulative)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(http_server_requests_seconds_count{application=\"petclinic\",status=~\"4..\"})",
+          "legendFormat": "4xx"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(http_server_requests_seconds_count{application=\"petclinic\",status=~\"5..\"})",
+          "legendFormat": "5xx"
+        }
+      ]
+    }
+  ]
+}

@@ -13,7 +13,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from Maven repository -->
     </parent>
 
@@ -86,19 +86,26 @@
             <scope>runtime</scope>
         </dependency>
         <dependency>
+            <!-- Micrometer Prometheus registry — exposes /actuator/prometheus -->
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.hsqldb</groupId>
             <artifactId>hsqldb</artifactId>
             <scope>runtime</scope>
         </dependency>
         <dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
-            <version>8.0.28</version>
+            <!-- Replaces mysql:mysql-connector-java:8.0.28 — fixes CVE-2023-22102, CVE-2022-21363, CVE-2021-2471 -->
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.4.0</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
+            <version>42.7.12</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -109,6 +116,11 @@
                 <exclusion>
                     <groupId>org.springframework</groupId>
                     <artifactId>*</artifactId>
+                </exclusion>
+                <!-- Exclude vulnerable spring-retry 1.0.3.RELEASE — H6 (SNYK-JAVA-ORGSPRINGFRAMEWORKRETRY-*) -->
+                <exclusion>
+                    <groupId>org.springframework.retry</groupId>
+                    <artifactId>spring-retry</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -132,12 +144,16 @@
 
         <!-- JSON / XML / Serialization libs -->
         <dependency>
+            <!-- Explicit version — fixes H7 SNYK-JAVA-TOOLSJACKSONCORE-17972609 (3.1.4 → 3.1.5) -->
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
+            <version>3.1.5</version>
         </dependency>
         <dependency>
+            <!-- Explicit version — fixes H7 SNYK-JAVA-TOOLSJACKSONCORE-17972609 (3.1.4 → 3.1.5) -->
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+            <version>3.1.5</version>
         </dependency>
         <dependency>
             <groupId>com.jayway.jsonpath</groupId>
@@ -169,6 +185,18 @@
             <artifactId>jakarta.xml.bind-api</artifactId>
         </dependency>
     </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Force jackson-databind >= 2.21.5 to fix H2/M1/M2 (SNYK-JAVA-COMFASTERXMLJACKSONCORE-*)
+                 pulled in transitively by springdoc-openapi -> swagger-core-jakarta -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>2.21.5</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <reporting>
         <plugins>

@@ -1,0 +1,157 @@
+name: PR Pipeline
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Build, test & verify coverage
+        run: ./mvnw --no-transfer-progress verify
+
+      - name: Upload JaCoCo XML report
+        uses: actions/upload-artifact@v5
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/jacoco.xml
+          retention-days: 7
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  snyk-scan:
+    name: Snyk Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk --silent
+
+      - name: Generate dependency tree (required by Snyk for Maven)
+        run: ./mvnw --no-transfer-progress dependency:resolve -DskipTests
+
+      - name: Run Snyk to check for vulnerabilities
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk test --file=pom.xml --severity-threshold=high \
+            --sarif-file-output=snyk.sarif \
+            --json-file-output=snyk-report.json \
+            --org=${{ secrets.SNYK_ORG }} || true
+
+      - name: Write Snyk summary
+        if: always()
+        run: |
+          echo "## 🔒 Snyk Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f snyk-report.json ]; then
+            HIGH=$(cat snyk-report.json | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          vulns=d.get('vulnerabilities',[])
+          high=[v for v in vulns if v.get('severity') in ('high','critical')]
+          if not high:
+              print('✅ No high/critical vulnerabilities found.')
+          else:
+              print(f'⚠️ **{len(high)} high/critical vulnerabilities found:**')
+              print('')
+              print('| Severity | Vulnerability | Package | Fix |')
+              print('|---|---|---|---|')
+              for v in high[:10]:
+                  fix=v.get('fixedIn',['none'])[0] if v.get('fixedIn') else 'none'
+                  print(f\"| {v.get('severity','').upper()} | {v.get('title','')} | {v.get('packageName','')}@{v.get('version','')} | {fix} |\")
+              if len(high)>10:
+                  print(f'| ... | {len(high)-10} more findings | | |')
+          ")
+            echo "$HIGH" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Snyk report not generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Snyk reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: snyk-reports
+          path: |
+            snyk.sarif
+            snyk-report.json
+          retention-days: 7
+
+  sonar-scan:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Build & run SonarCloud analysis
+        run: >
+          ./mvnw --no-transfer-progress verify
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  summary:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [build-and-test, snyk-scan, sonar-scan]
+    if: always()
+
+    steps:
+      - name: Write job summary
+        run: |
+          echo "## PR Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Test | ${{ needs.build-and-test.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Snyk Scan | ${{ needs.snyk-scan.result == 'success' && '✅ Passed' || '⚠️ Issues Found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SonarCloud | ${{ needs.sonar-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
