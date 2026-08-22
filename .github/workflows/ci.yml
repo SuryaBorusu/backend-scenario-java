@@ -125,8 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-test
     outputs:
-      image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-test.outputs.version }}
-      version: ${{ needs.build-test.outputs.version }}
+      image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v5
@@ -210,6 +210,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Read VERSION file
+        id: version
+        run: echo "version=$(cat VERSION | tr -d '[:space:]")" >> "$GITHUB_OUTPUT"
+
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
@@ -218,13 +222,13 @@ jobs:
 
       - name: Pull and load image into kind
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.version }}
-          kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.version }} --name petclinic-ci
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} --name petclinic-ci
 
       - name: Substitute image in manifests
         run: |
-          export IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.version }}"
-          export IMAGE_TAG="${{ needs.docker-build.outputs.version }}"
+          export IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          export IMAGE_TAG="${{ steps.version.outputs.version }}"
           envsubst < k8s/deployment.yml > k8s/deployment-ci.yml
 
       - name: Deploy
@@ -277,7 +281,7 @@ jobs:
             curl -sf http://localhost:9966/petclinic/api/vets | python3 -m json.tool | head -50 || echo "unreachable"
             echo '```'
             echo ""
-            echo "**Image:** `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.version }}`"
+            echo "**Image:** `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}`"
             echo "**Commit:** `${{ github.sha }}`"
           } >> "$GITHUB_STEP_SUMMARY"
 
