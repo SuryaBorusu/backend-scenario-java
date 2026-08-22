@@ -96,32 +96,17 @@ jobs:
             echo "Snyk report not generated (token missing or scan error)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          python3 - <<'EOF'
-          import json, os
-          path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
-          with open("snyk-report.json") as f:
-              data = json.load(f)
-          vulns = data.get("vulnerabilities", [])
-          crits = [v for v in vulns if v.get("severity") == "critical"]
-          highs = [v for v in vulns if v.get("severity") == "high"]
-          lines = []
-          if not crits and not highs:
-              lines.append("No Critical or High vulnerabilities found.")
-          else:
-              lines.append("**{} Critical, {} High** vulnerabilities found.".format(len(crits), len(highs)))
-              lines.append("")
-              lines.append("| Severity | Vulnerability | Package | Fix |")
-              lines.append("|---|---|---|---|")
-              for v in (crits + highs)[:15]:
-                  fix = v.get("fixedIn", ["none"])[0] if v.get("fixedIn") else "none"
-                  lines.append("| {} | {} | {}@{} | {} |".format(
-                      v.get("severity","").upper(), v.get("title",""),
-                      v.get("packageName",""), v.get("version",""), fix))
-          with open(path, "a") as out:
-              out.write("
-".join(lines) + "
-")
-          EOF
+          CRITS=$(jq '[.vulnerabilities[]? | select(.severity=="critical")] | length' snyk-report.json)
+          HIGHS=$(jq '[.vulnerabilities[]? | select(.severity=="high")] | length' snyk-report.json)
+          if [ "$CRITS" -eq 0 ] && [ "$HIGHS" -eq 0 ]; then
+            echo "No Critical or High vulnerabilities found." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**${CRITS} Critical, ${HIGHS} High** vulnerabilities found." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Severity | Vulnerability | Package | Fix |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.vulnerabilities[]? | select(.severity=="critical" or .severity=="high") | "| \(.severity | ascii_upcase) | \(.title) | \(.packageName)@\(.version) | \(if .fixedIn then .fixedIn[0] else "none" end) |"' snyk-report.json | head -15 >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload Snyk reports
         if: always()
