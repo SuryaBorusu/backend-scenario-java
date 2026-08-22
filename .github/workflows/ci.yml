@@ -3,6 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: read
@@ -77,12 +79,7 @@ jobs:
       - name: Run Snyk — hard fail on Critical/High
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: |
-          snyk test 
-            --file=pom.xml 
-            --severity-threshold=critical 
-            --sarif-file-output=snyk.sarif 
-            --json-file-output=snyk-report.json
+        run: snyk test --file=pom.xml --severity-threshold=critical --sarif-file-output=snyk.sarif --json-file-output=snyk-report.json
 
       - name: Upload SARIF to Code Scanning
         if: always()
@@ -93,39 +90,38 @@ jobs:
 
       - name: Write Snyk summary
         if: always()
-        shell: python3 {0}
         run: |
+          echo "## Snyk Dependency Scan" >> "$GITHUB_STEP_SUMMARY"
+          if [ ! -f snyk-report.json ]; then
+            echo "Snyk report not generated (token missing or scan error)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - <<'EOF'
           import json, os
-          summary = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
-          try:
-              with open("snyk-report.json") as f:
-                  data = json.load(f)
-              vulns = data.get("vulnerabilities", [])
-              crits = [v for v in vulns if v.get("severity") == "critical"]
-              highs = [v for v in vulns if v.get("severity") == "high"]
-              with open(summary, "a") as out:
-                  out.write("## Snyk Dependency Scan
-
+          path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          with open("snyk-report.json") as f:
+              data = json.load(f)
+          vulns = data.get("vulnerabilities", [])
+          crits = [v for v in vulns if v.get("severity") == "critical"]
+          highs = [v for v in vulns if v.get("severity") == "high"]
+          lines = []
+          if not crits and not highs:
+              lines.append("No Critical or High vulnerabilities found.")
+          else:
+              lines.append("**{} Critical, {} High** vulnerabilities found.".format(len(crits), len(highs)))
+              lines.append("")
+              lines.append("| Severity | Vulnerability | Package | Fix |")
+              lines.append("|---|---|---|---|")
+              for v in (crits + highs)[:15]:
+                  fix = v.get("fixedIn", ["none"])[0] if v.get("fixedIn") else "none"
+                  lines.append("| {} | {} | {}@{} | {} |".format(
+                      v.get("severity","").upper(), v.get("title",""),
+                      v.get("packageName",""), v.get("version",""), fix))
+          with open(path, "a") as out:
+              out.write("
+".join(lines) + "
 ")
-                  if not crits and not highs:
-                      out.write("No Critical or High vulnerabilities found.
-")
-                  else:
-                      out.write(f"**{len(crits)} Critical, {len(highs)} High** vulnerabilities found.
-
-")
-                      out.write("| Severity | Vulnerability | Package | Fix |
-")
-                      out.write("|---|---|---|---|
-")
-                      for v in (crits + highs)[:15]:
-                          fix = v.get("fixedIn", ["none"])[0] if v.get("fixedIn") else "none"
-                          out.write(f"| {v.get('severity','').upper()} | {v.get('title','')} | {v.get('packageName','')}@{v.get('version','')} | {fix} |
-")
-          except Exception as e:
-              with open(summary, "a") as out:
-                  out.write(f"Snyk report not generated: {e}
-")
+          EOF
 
       - name: Upload Snyk reports
         if: always()
@@ -225,8 +221,7 @@ jobs:
       - name: Pull and load image into kind
         run: |
           docker pull ${{ needs.docker-build.outputs.image-ref }}
-          kind load docker-image ${{ needs.docker-build.outputs.image-ref }} 
-            --name petclinic-ci
+          kind load docker-image ${{ needs.docker-build.outputs.image-ref }} --name petclinic-ci
 
       - name: Substitute image in manifests
         run: |
@@ -241,11 +236,7 @@ jobs:
         run: kubectl rollout status deployment/petclinic --timeout=120s
 
       - name: Wait for pod ready
-        run: |
-          kubectl wait pod 
-            --selector=app=petclinic 
-            --for=condition=Ready 
-            --timeout=120s
+        run: kubectl wait pod --selector=app=petclinic --for=condition=Ready --timeout=120s
 
       - name: Port-forward for smoke tests
         run: |
@@ -275,25 +266,22 @@ jobs:
             echo ""
             echo "### Health Check"
             echo '```json'
-            curl -sf http://localhost:9966/petclinic/actuator/health 
-              | python3 -m json.tool || echo "unreachable"
+            curl -sf http://localhost:9966/petclinic/actuator/health | python3 -m json.tool || echo "unreachable"
             echo '```'
             echo ""
             echo "### API Smoke Test — GET /api/owners"
             echo '```json'
-            curl -sf http://localhost:9966/petclinic/api/owners 
-              | python3 -m json.tool | head -50 || echo "unreachable"
+            curl -sf http://localhost:9966/petclinic/api/owners | python3 -m json.tool | head -50 || echo "unreachable"
             echo '```'
             echo ""
             echo "### API Smoke Test — GET /api/vets"
             echo '```json'
-            curl -sf http://localhost:9966/petclinic/api/vets 
-              | python3 -m json.tool | head -50 || echo "unreachable"
+            curl -sf http://localhost:9966/petclinic/api/vets | python3 -m json.tool | head -50 || echo "unreachable"
             echo '```'
             echo ""
             echo "**Image:** `${{ needs.docker-build.outputs.image-ref }}`"
             echo "**Commit:** `${{ github.sha }}`"
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── 5. Final Summary ─────────────────────────────────────────────────────────
   summary:
@@ -318,14 +306,11 @@ jobs:
             echo "**Commit:** `${{ github.sha }}`"
             echo "**Ref:** `${{ github.ref }}`"
             echo "**Actor:** ${{ github.actor }}"
-          } >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ needs.build-test.result }}" == "success" && 
-                "${{ needs.snyk-scan.result }}" == "success" && 
-                "${{ needs.docker-build.result }}" == "success" && 
-                "${{ needs.deploy-kind.result }}" == "success" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "## All gates passed — change is production-ready" >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.snyk-scan.result }}" == "success" && "${{ needs.docker-build.result }}" == "success" && "${{ needs.deploy-kind.result }}" == "success" ]]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "## All gates passed — change is production-ready" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "## One or more gates failed — change blocked" >> $GITHUB_STEP_SUMMARY
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "## One or more gates failed — change blocked" >> "$GITHUB_STEP_SUMMARY"
           fi
