@@ -212,7 +212,9 @@ jobs:
 
       - name: Read VERSION file
         id: version
-        run: echo "version=$(cat VERSION | tr -d '[:space:]")" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION=$(tr -d "[:space:]" < VERSION)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
