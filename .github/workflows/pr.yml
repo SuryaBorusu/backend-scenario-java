@@ -1,8 +1,9 @@
 name: PR Pipeline
 
 on:
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch: # manually triggered only — PR auto-trigger disabled
+  # pull_request:
+  #   branches: [ "main" ]
 
 jobs:
   build-and-test:
