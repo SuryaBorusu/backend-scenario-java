@@ -13,8 +13,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # github.repository is always lowercase (OCI image names must be lowercase)
-  IMAGE_NAME: ${{ github.repository }}
+  # Hardcoded lowercase — OCI image names must be fully lowercase
+  IMAGE_NAME: suryaborusu/petclinic
 
 jobs:
 
