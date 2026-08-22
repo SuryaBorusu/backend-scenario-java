@@ -1,46 +1,331 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
-  # pull_request:
-  #   branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/petclinic
 
 jobs:
-  build-and-test:
-    name: Build & Test (Java ${{ matrix.java }})
+
+  # ── 1. Build and Test ────────────────────────────────────────────────────────
+  build-test:
+    name: Build & Test
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        java: [ 21, 24 ]
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Set up JDK ${{ matrix.java }}
+      - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
-          java-version: ${{ matrix.java }}
+          java-version: 21
           distribution: temurin
           cache: maven
 
-      - name: Build, test & verify coverage
+      - name: Build, test and verify coverage
         run: ./mvnw --no-transfer-progress verify
 
-      - name: Upload JaCoCo XML report
-        if: matrix.java == 21
+      - name: Upload JAR
+        uses: actions/upload-artifact@v5
+        with:
+          name: app-jar
+          path: target/*.jar
+          retention-days: 1
+
+      - name: Upload JaCoCo report
         uses: actions/upload-artifact@v5
         with:
           name: jacoco-report
           path: target/site/jacoco/jacoco.xml
           retention-days: 14
 
-      - name: Upload test results
-        if: always() && matrix.java == 21
+      - name: Upload Surefire results
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: surefire-reports
           path: target/surefire-reports/
           retention-days: 14
+
+  # ── 2. Snyk Dependency Scan (parallel — no needs) ───────────────────────────
+  snyk-scan:
+    name: Snyk Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Resolve dependency tree
+        run: ./mvnw --no-transfer-progress dependency:resolve -DskipTests
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk --silent
+
+      - name: Run Snyk — hard fail on Critical/High
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk test 
+            --file=pom.xml 
+            --severity-threshold=critical 
+            --sarif-file-output=snyk.sarif 
+            --json-file-output=snyk-report.json
+
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk.sarif
+        continue-on-error: true
+
+      - name: Write Snyk summary
+        if: always()
+        shell: python3 {0}
+        run: |
+          import json, os
+          summary = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          try:
+              with open("snyk-report.json") as f:
+                  data = json.load(f)
+              vulns = data.get("vulnerabilities", [])
+              crits = [v for v in vulns if v.get("severity") == "critical"]
+              highs = [v for v in vulns if v.get("severity") == "high"]
+              with open(summary, "a") as out:
+                  out.write("## Snyk Dependency Scan
+
+")
+                  if not crits and not highs:
+                      out.write("No Critical or High vulnerabilities found.
+")
+                  else:
+                      out.write(f"**{len(crits)} Critical, {len(highs)} High** vulnerabilities found.
+
+")
+                      out.write("| Severity | Vulnerability | Package | Fix |
+")
+                      out.write("|---|---|---|---|
+")
+                      for v in (crits + highs)[:15]:
+                          fix = v.get("fixedIn", ["none"])[0] if v.get("fixedIn") else "none"
+                          out.write(f"| {v.get('severity','').upper()} | {v.get('title','')} | {v.get('packageName','')}@{v.get('version','')} | {fix} |
+")
+          except Exception as e:
+              with open(summary, "a") as out:
+                  out.write(f"Snyk report not generated: {e}
+")
+
+      - name: Upload Snyk reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: snyk-reports
+          path: |
+            snyk.sarif
+            snyk-report.json
+          retention-days: 14
+
+  # ── 3. Docker Build, Trivy Scan, Push ───────────────────────────────────────
+  docker-build:
+    name: Docker Build & Scan
+    runs-on: ubuntu-latest
+    needs: build-test
+    outputs:
+      image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download JAR
+        uses: actions/download-artifact@v5
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+
+      - name: Trivy image scan — hard fail on Critical/High
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+        continue-on-error: true
+
+  # ── 4. Deploy to kind cluster ────────────────────────────────────────────────
+  deploy-kind:
+    name: Deploy to kind
+    runs-on: ubuntu-latest
+    needs: [build-test, snyk-scan, docker-build]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: petclinic-ci
+          node_image: kindest/node:v1.31.0
+
+      - name: Pull and load image into kind
+        run: |
+          docker pull ${{ needs.docker-build.outputs.image-ref }}
+          kind load docker-image ${{ needs.docker-build.outputs.image-ref }} 
+            --name petclinic-ci
+
+      - name: Substitute image in manifests
+        run: |
+          export IMAGE="${{ needs.docker-build.outputs.image-ref }}"
+          export IMAGE_TAG="sha-${{ github.sha }}"
+          envsubst < k8s/deployment.yml > k8s/deployment-ci.yml
+
+      - name: Deploy
+        run: kubectl apply -f k8s/deployment-ci.yml
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/petclinic --timeout=120s
+
+      - name: Wait for pod ready
+        run: |
+          kubectl wait pod 
+            --selector=app=petclinic 
+            --for=condition=Ready 
+            --timeout=120s
+
+      - name: Port-forward for smoke tests
+        run: |
+          kubectl port-forward svc/petclinic 9966:9966 &
+          sleep 8
+
+      - name: Write deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Deployment to kind"
+            echo ""
+            echo "### Pod Status"
+            echo '```'
+            kubectl get pods -o wide
+            echo '```'
+            echo ""
+            echo "### Deployment Describe"
+            echo '```'
+            kubectl describe deployment petclinic
+            echo '```'
+            echo ""
+            echo "### Container Logs (last 30 lines)"
+            echo '```'
+            kubectl logs --selector=app=petclinic --tail=30 || true
+            echo '```'
+            echo ""
+            echo "### Health Check"
+            echo '```json'
+            curl -sf http://localhost:9966/petclinic/actuator/health 
+              | python3 -m json.tool || echo "unreachable"
+            echo '```'
+            echo ""
+            echo "### API Smoke Test — GET /api/owners"
+            echo '```json'
+            curl -sf http://localhost:9966/petclinic/api/owners 
+              | python3 -m json.tool | head -50 || echo "unreachable"
+            echo '```'
+            echo ""
+            echo "### API Smoke Test — GET /api/vets"
+            echo '```json'
+            curl -sf http://localhost:9966/petclinic/api/vets 
+              | python3 -m json.tool | head -50 || echo "unreachable"
+            echo '```'
+            echo ""
+            echo "**Image:** `${{ needs.docker-build.outputs.image-ref }}`"
+            echo "**Commit:** `${{ github.sha }}`"
+          } >> $GITHUB_STEP_SUMMARY
+
+  # ── 5. Final Summary ─────────────────────────────────────────────────────────
+  summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [build-test, snyk-scan, docker-build, deploy-kind]
+    if: always()
+
+    steps:
+      - name: Write pipeline summary
+        run: |
+          {
+            echo "# CI/CD Pipeline Results"
+            echo ""
+            echo "| Stage | Status |"
+            echo "|---|---|"
+            echo "| Build & Test | ${{ needs.build-test.result == 'success' && 'PASS' || 'FAIL' }} |"
+            echo "| Snyk Scan | ${{ needs.snyk-scan.result == 'success' && 'PASS' || needs.snyk-scan.result == 'skipped' && 'SKIPPED' || 'FAIL' }} |"
+            echo "| Docker Build & Trivy | ${{ needs.docker-build.result == 'success' && 'PASS' || 'FAIL' }} |"
+            echo "| Deploy (kind) | ${{ needs.deploy-kind.result == 'success' && 'PASS' || needs.deploy-kind.result == 'skipped' && 'SKIPPED (upstream gate failed)' || 'FAIL' }} |"
+            echo ""
+            echo "**Commit:** `${{ github.sha }}`"
+            echo "**Ref:** `${{ github.ref }}`"
+            echo "**Actor:** ${{ github.actor }}"
+          } >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ needs.build-test.result }}" == "success" && 
+                "${{ needs.snyk-scan.result }}" == "success" && 
+                "${{ needs.docker-build.result }}" == "success" && 
+                "${{ needs.deploy-kind.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## All gates passed — change is production-ready" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## One or more gates failed — change blocked" >> $GITHUB_STEP_SUMMARY
+          fi

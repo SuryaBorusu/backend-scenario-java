@@ -1,0 +1,80 @@
+---
+# PetClinic Deployment — used by the CI pipeline's deploy-kind job.
+# The IMAGE_TAG placeholder is substituted at deploy time via envsubst.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petclinic
+  labels:
+    app: petclinic
+    version: "${IMAGE_TAG}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: petclinic
+  template:
+    metadata:
+      labels:
+        app: petclinic
+        version: "${IMAGE_TAG}"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: petclinic
+          image: "${IMAGE}"
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 9966
+              protocol: TCP
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "h2,spring-data-jpa"
+          readinessProbe:
+            httpGet:
+              path: /petclinic/actuator/health/readiness
+              port: 9966
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /petclinic/actuator/health/liveness
+              port: 9966
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: petclinic
+  labels:
+    app: petclinic
+spec:
+  selector:
+    app: petclinic
+  type: NodePort
+  ports:
+    - name: http
+      port: 9966
+      targetPort: 9966
+      nodePort: 30966
+      protocol: TCP
