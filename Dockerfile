@@ -29,7 +29,6 @@ USER petclinic
 EXPOSE 9966
 
 # Healthcheck via actuator — container is healthy only when Spring is fully up
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 
-    CMD wget -qO- http://localhost:9966/petclinic/actuator/health | grep -q '"status":"UP"' || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD wget -qO- http://localhost:9966/petclinic/actuator/health | grep -q '"status":"UP"' || exit 1
 
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
